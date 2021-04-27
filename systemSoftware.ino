@@ -5,11 +5,13 @@
 #include <SPI.h>
 #include "Adafruit_VL53L0X.h"
 #define NUMPIXELS 15 // Number of LEDs in strip
-#define DATAPIN 4
-#define CLOCKPIN 5
+#define DATAPIN 4 //Pin on the Arduino to connect the SDA
+#define CLOCKPIN 5 //Pin on Arduino to connect the SCL
 Adafruit_DotStar strip(NUMPIXELS, DATAPIN, CLOCKPIN, DOTSTAR_BRG); //defines DotStar Strip
-Adafruit_VL53L0X sleeve = Adafruit_VL53L0X();
-LIDARLite_v4LED rack;
+LIDARLite_v4LED sleeve1; //Define the Sleeve Sensor 1
+LIDARLite_v4LED sleeve2; //Define the second sleeve sensor
+LIDARLite_v4LED rack1; //Define the first rack sensor
+LIDARLite_v4LED rack2; //Define the second Rack sensor
 
 enum rangeType_T
 {
@@ -20,17 +22,20 @@ enum rangeType_T
     RANGE_CONTINUOUS_GPIO
 };
 
-uint16_t distanceRack;
-uint8_t  newDistanceRack;
+uint16_t distanceRack1; //Defines measurement variables for the rack sensors
+uint16_t distanceRack2;
+uint8_t  newDistanceRack1;
+uint8_t  newDistanceRack2;
 
-VL53L0X_RangingMeasurementData_t measurementSleeve;
+uint16_t distanceSleeve1; //Defines measurement variables for the sleeve sensors
+uint16_t distanceSleeve2;
+uint8_t  newDistanceSleeve1;
+uint8_t  newDistanceSleeve2;
 
 double coilDist;
-double coilOffsetReso = 3;
+double coilOffsetReso = 3; //Change this in terms of cm for the resolution of the LightBar
 int coilOffset;
 uint32_t ledColor;
-int initTime;
-int endTime;
 
 void setup() {
   // put your setup code here, to run once:
@@ -38,12 +43,17 @@ void setup() {
   Wire.begin();
   digitalWrite(SCL, LOW);
   digitalWrite(SDA, LOW);
-  rack.configure(0);
+  rack1.configure(0); //Connects the first rack sensor
+  digitalWrite(SCL, LOW);
+  digitalWrite(SDA, LOW);
+  rack2.configure(0, 0x50); //Connects the second rack sensor
+  digitalWrite(SCL, LOW);
+  digitalWrite(SDA, LOW);
+  sleeve1.configure(0, 0x49); //Connects the first sleeve sensor
+  digitalWrite(SCL, LOW);
+  digitalWrite(SDA, LOW);
+  sleeve2.configure(0, 0x48);//Connects the second sleeve sensor
   Serial.println("Rack Sensor Connected");
-  if (!sleeve.begin()) {
-    Serial.println(F("Failed to boot VL53L0X"));
-    while(1);
-  } 
   Serial.println("Sleeve Sensor Connected");
   strip.begin(); //Begins port communication with LED LightBar
   strip.show(); //Initializes all LEDs to "off"
@@ -53,37 +63,41 @@ void setup() {
 void loop() {
   // put your main code here, to run repeatedly:
   Serial.println("loop start");
-  initTime = millis();
   //Rack Sensing
-   newDistanceRack = distanceContinuous(&distanceRack);
-   if (newDistanceRack)
+   newDistanceRack1 = distanceContinuous(&distanceRack1, rack1);
+   newDistanceRack2 = distanceContinuous(&distanceRack2, rack2);
+   if (newDistanceRack1 | newDistanceRack2)
        {
            Serial.print("Rack Distance: ");
+           distanceRack = min(distanceRack1, distanceRack2);
            Serial.println(distanceRack-4);
        }
    //Sleeve Sensing
-   sleeve.rangingTest(&measurementSleeve, false);
-   if (measurementSleeve.RangeStatus != 4) {
-    Serial.print("Sleeve Distance: ");
-    Serial.println((measurementSleeve.RangeMilliMeter - 55)/10.0);
-   }
-   coilDist = (distanceRack-4) - ((measurementSleeve.RangeMilliMeter - 55)/10.0);
-   Serial.print("Coil Distance: ");
-   Serial.println(coilDist);
-   coilOffset = (coilDist/coilOffsetReso);
+   newDistanceSleeve1 = distanceContinuous(&distanceSleeve1, sleeve1);
+   newDistanceSleeve2 = distanceContinuous(&distanceSleeve2, sleeve2);
+   if (newDistanceSleeve1 | newDistanceSleeve2)
+       {
+           Serial.print("Sleeve Distance: ");
+           distanceSleeve = min(distanceSleeve1, distanceSleeve2);
+           Serial.println(distanceSleeve-4);
+       }
+    
+   //Calculating using the measurements from above
+   coilOffset = (coilDist/coilOffsetReso); //Finding the offset from the perfect placement position
    if((coilDist/coilOffsetReso) > 0){
       coilOffset = floor((coilDist/coilOffsetReso)) + 8;
    }
    else {
     coilOffset = ceil((coilDist/coilOffsetReso)) + 8;
    }
-
+   //Finding the offset in units of resolution defined above
    if(coilOffset > 15){
     coilOffset = 15;
    }
    if(coilOffset < 1){
     coilOffset = 1;
    }
+   //Defining which LEDs will be what color
    Serial.print("LED Index: ");
    Serial.println(coilOffset);
    switch(coilOffset) {
@@ -115,15 +129,11 @@ void loop() {
       strip.clear(); //Turns all LEDs "off"
       strip.setPixelColor(coilOffset-1, ledColor); //Sets LED[coilOffset] to the specified color
       strip.show(); //Pushes set colors onto LED strip
-
-      endTime = millis();
-      Serial.print("Measured Time: ");
-      Serial.println(endTime - initTime);
-      Serial.println("------------------");
+      Serial.println("------------------"); //New Loop
 }
   
-
-uint8_t distanceContinuous(uint16_t * distance)
+//The function that records the measurements from the sensors
+uint8_t distanceContinuous(uint16_t * distance, LIDARLite_v4LED rack)
 {
     uint8_t newDistance = 0;
 
